@@ -8,6 +8,7 @@ gold_alert.py - ระบบแจ้งเตือนทอง XAU/USD เข�
 import os
 import sys
 import json
+import time
 import datetime as dt
 
 import numpy as np
@@ -262,11 +263,12 @@ def build_facts(h1, m, trend, e_fast, e_slow):
 # ---------------- Gemini ----------------
 def model_candidates():
     names = [GEMINI_MODEL] if GEMINI_MODEL else []
-    names += ["gemini-flash-latest", "gemini-2.5-flash"]
+    names += ["gemini-flash-latest", "gemini-flash-lite-latest"]
     try:
         r = requests.get("https://generativelanguage.googleapis.com/v1beta/models",
                          headers={"x-goog-api-key": GEMINI_KEY}, params={"pageSize": 200}, timeout=30)
-        bad = ("live", "tts", "image", "audio", "embed", "translate", "robotics", "computer", "gemma", "vision")
+        bad = ("live", "tts", "image", "audio", "embed", "translate", "robotics", "computer",
+               "gemma", "vision", "preview", "omni", "exp")
         found = [m["name"].split("/")[-1] for m in r.json().get("models", [])
                  if "generateContent" in m.get("supportedGenerationMethods", [])]
         found = sorted([n for n in found if "flash" in n and not any(b in n for b in bad)], reverse=True)
@@ -288,29 +290,32 @@ def gemini(prompt):
     global _MODELS
     if not GEMINI_KEY:
         return None
-    if _MODELS is None:
-        _MODELS = []
-    tried = 0
-    for model in (_MODELS or model_candidates()):
-        tried += 1
-        try:
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                headers={"x-goog-api-key": GEMINI_KEY, "Content-Type": "application/json"},
-                json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"temperature": 0.3, "maxOutputTokens": 2000}},
-                timeout=60,
-            )
-            if r.status_code == 200:
-                parts = r.json()["candidates"][0]["content"]["parts"]
-                text = "".join(p.get("text", "") for p in parts).strip()
-                if text:
-                    _MODELS = [model]   # จำโมเดลที่ใช้ได้
-                    return text
-            else:
-                print("Gemini", model, r.status_code, r.text[:150])
-        except Exception as e:
-            print("Gemini error", model, str(e)[:150])
+    if not _MODELS:
+        _MODELS = model_candidates()
+    for model in _MODELS:
+        for attempt in range(3):
+            try:
+                r = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    headers={"x-goog-api-key": GEMINI_KEY, "Content-Type": "application/json"},
+                    json={"contents": [{"parts": [{"text": prompt}]}],
+                          "generationConfig": {"temperature": 0.3, "maxOutputTokens": 2000}},
+                    timeout=60,
+                )
+                if r.status_code == 200:
+                    parts = r.json()["candidates"][0]["content"]["parts"]
+                    text = "".join(p.get("text", "") for p in parts).strip()
+                    if text:
+                        return text
+                    break
+                print("Gemini", model, r.status_code, r.text[:120].replace("\n", " "))
+                if r.status_code in (500, 503) and attempt < 2:
+                    time.sleep(8 * (attempt + 1))   # โมเดลคนใช้เยอะ ลองใหม่
+                    continue
+                break
+            except Exception as e:
+                print("Gemini error", model, str(e)[:120])
+                break
     return None
 
 
