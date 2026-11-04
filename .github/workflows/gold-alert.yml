@@ -1,0 +1,43 @@
+name: gold-alert
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gold-alert
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run gold alert
+        env:
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DISCORD_WEBHOOK_SETUP: ${{ secrets.DISCORD_WEBHOOK_SETUP }}
+          DISCORD_WEBHOOK_HOURLY: ${{ secrets.DISCORD_WEBHOOK_HOURLY }}
+          FORCE_HOURLY: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+        run: python gold_alert.py
+
+      - name: Save state
+        run: |
+          git config user.name "gold-alert-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet || (git commit -m "update state" && git push)
